@@ -1,6 +1,6 @@
 const USE_BACKEND = false;
 
-const BACKEND_URL = "";
+const BACKEND_URL = "technicka-podpora-ai-2.onrender.com";
 const STUDENT_ID = "Tomáš_Maršál_4IT";
 
 const form = document.getElementById("question-form");
