@@ -1,18 +1,21 @@
+
 import os
 from pathlib import Path
 
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-from openai import OpenAI
+from google import genai
+from google.genai import types
 
 
 # ============================================================
 # VDF Games Support Tool
-# Backend: Flask + Render + OpenAI Responses API
+# Backend: Flask + Render + Google Gemini API
 # ============================================================
 
 app = Flask(__name__)
 CORS(app)
+
 app.config["MAX_CONTENT_LENGTH"] = 32 * 1024
 
 
@@ -20,10 +23,17 @@ app.config["MAX_CONTENT_LENGTH"] = 32 * 1024
 # 1. Proměnné prostředí
 # ------------------------------------------------------------
 
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
-OPENAI_MODEL = os.environ.get("OPENAI_MODEL")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+GEMINI_MODEL = os.environ.get(
+    "GEMINI_MODEL",
+    "gemini-2.5-flash"
+)
 
-client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
+client = (
+    genai.Client(api_key=GEMINI_API_KEY)
+    if GEMINI_API_KEY
+    else None
+)
 
 
 # ------------------------------------------------------------
@@ -31,10 +41,15 @@ client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 # ------------------------------------------------------------
 
 BASE_DIR = Path(__file__).resolve().parent
-DOCUMENTATION_PATH = BASE_DIR / "docs" / "podpora.md"
+
+DOCUMENTATION_PATH = (
+    BASE_DIR / "docs" / "podpora.md"
+)
 
 try:
-    documentation = DOCUMENTATION_PATH.read_text(encoding="utf-8")
+    documentation = DOCUMENTATION_PATH.read_text(
+        encoding="utf-8"
+    )
 except FileNotFoundError:
     documentation = ""
 
@@ -47,7 +62,8 @@ INSTRUCTIONS = """
 Jsi pracovník zákaznické podpory společnosti VDF Games.
 
 PRAVIDLA:
-- Odpovídej česky.
+
+- Odpovídej výhradně česky.
 - Odpovídej stručně, srozumitelně a profesionálně.
 - Používej pouze informace obsažené v přiložené firemní dokumentaci.
 - Pokud dokumentace odpověď neobsahuje, nic si nevymýšlej.
@@ -74,8 +90,8 @@ def home():
 def health():
     return jsonify({
         "status": "ok",
-        "openai_key": bool(OPENAI_API_KEY),
-        "openai_model": bool(OPENAI_MODEL),
+        "gemini_key": bool(GEMINI_API_KEY),
+        "gemini_model": GEMINI_MODEL,
         "documentation": bool(documentation)
     })
 
@@ -86,11 +102,17 @@ def health():
 
 @app.post("/chat")
 def chat():
+
     data = request.get_json(silent=True) or {}
 
-    message = (data.get("message") or "").strip()
-    student = (data.get("student") or "unknown").strip()
-    email = (data.get("email") or "").strip()
+    message = data.get("message") or ""
+
+    if not isinstance(message, str):
+        return jsonify({
+            "error": "Neplatný formát dotazu."
+        }), 400
+
+    message = message.strip()
 
     if not message:
         return jsonify({
@@ -102,14 +124,9 @@ def chat():
             "error": "Dotaz je příliš dlouhý."
         }), 400
 
-    if not OPENAI_API_KEY or client is None:
+    if not GEMINI_API_KEY or client is None:
         return jsonify({
-            "error": "Na serveru chybí OPENAI_API_KEY."
-        }), 500
-
-    if not OPENAI_MODEL:
-        return jsonify({
-            "error": "Na serveru chybí OPENAI_MODEL."
+            "error": "Na serveru chybí GEMINI_API_KEY."
         }), 500
 
     if not documentation:
@@ -137,13 +154,20 @@ DOTAZ ZÁKAZNÍKA:
 """
 
     try:
-        response = client.responses.create(
-            model=OPENAI_MODEL,
-            instructions=INSTRUCTIONS,
-            input=prompt
+
+        response = client.models.generate_content(
+            model=GEMINI_MODEL,
+
+            contents=prompt,
+
+            config=types.GenerateContentConfig(
+                system_instruction=INSTRUCTIONS,
+                temperature=0.3,
+                max_output_tokens=1000
+            )
         )
 
-        reply = (response.output_text or "").strip()
+        reply = (response.text or "").strip()
 
         if not reply:
             return jsonify({
@@ -155,7 +179,8 @@ DOTAZ ZÁKAZNÍKA:
         })
 
     except Exception as error:
-        print("OpenAI API error:", repr(error))
+
+        print("Gemini API error:", repr(error))
 
         return jsonify({
             "error": "Nepodařilo se vytvořit odpověď podpory."
@@ -167,10 +192,11 @@ DOTAZ ZÁKAZNÍKA:
 # ------------------------------------------------------------
 
 if __name__ == "__main__":
+
     port = int(os.environ.get("PORT", "8000"))
 
     app.run(
         host="0.0.0.0",
         port=port,
-        debug=True
+        debug=False
     )
