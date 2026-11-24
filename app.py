@@ -4,13 +4,12 @@ from pathlib import Path
 
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-from google import genai
-from google.genai import types
+from groq import Groq
 
 
 # ============================================================
 # VDF Games Support Tool
-# Backend: Flask + Render + Google Gemini API
+# Backend: Flask + Render + Groq API
 # ============================================================
 
 app = Flask(__name__)
@@ -23,15 +22,16 @@ app.config["MAX_CONTENT_LENGTH"] = 32 * 1024
 # 1. Proměnné prostředí
 # ------------------------------------------------------------
 
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-GEMINI_MODEL = os.environ.get(
-    "GEMINI_MODEL",
-    "gemini-2.5-flash"
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
+
+GROQ_MODEL = os.environ.get(
+    "GROQ_MODEL",
+    "llama-3.3-70b-versatile"
 )
 
 client = (
-    genai.Client(api_key=GEMINI_API_KEY)
-    if GEMINI_API_KEY
+    Groq(api_key=GROQ_API_KEY)
+    if GROQ_API_KEY
     else None
 )
 
@@ -90,8 +90,8 @@ def home():
 def health():
     return jsonify({
         "status": "ok",
-        "gemini_key": bool(GEMINI_API_KEY),
-        "gemini_model": GEMINI_MODEL,
+        "groq_key": bool(GROQ_API_KEY),
+        "groq_model": GROQ_MODEL,
         "documentation": bool(documentation)
     })
 
@@ -124,9 +124,9 @@ def chat():
             "error": "Dotaz je příliš dlouhý."
         }), 400
 
-    if not GEMINI_API_KEY or client is None:
+    if not GROQ_API_KEY or client is None:
         return jsonify({
-            "error": "Na serveru chybí GEMINI_API_KEY."
+            "error": "Na serveru chybí GROQ_API_KEY."
         }), 500
 
     if not documentation:
@@ -134,40 +134,35 @@ def chat():
             "error": "Server nenašel dokumentaci docs/podpora.md."
         }), 500
 
-    prompt = f"""
-FIREMNÍ DOKUMENTACE:
-
---- ZAČÁTEK DOKUMENTACE ---
-
-{documentation}
-
---- KONEC DOKUMENTACE ---
-
-
-DOTAZ ZÁKAZNÍKA:
-
---- ZAČÁTEK DOTAZU ---
-
-{message}
-
---- KONEC DOTAZU ---
-"""
-
     try:
 
-        response = client.models.generate_content(
-            model=GEMINI_MODEL,
+        response = client.chat.completions.create(
 
-            contents=prompt,
+            model=GROQ_MODEL,
 
-            config=types.GenerateContentConfig(
-                system_instruction=INSTRUCTIONS,
-                temperature=0.3,
-                max_output_tokens=1000
-            )
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        INSTRUCTIONS
+                        + "\n\nFIREMNÍ DOKUMENTACE:\n\n"
+                        + documentation
+                    )
+                },
+                {
+                    "role": "user",
+                    "content": message
+                }
+            ],
+
+            temperature=0.3,
+
+            max_completion_tokens=1000
         )
 
-        reply = (response.text or "").strip()
+        reply = (
+            response.choices[0].message.content or ""
+        ).strip()
 
         if not reply:
             return jsonify({
@@ -180,7 +175,7 @@ DOTAZ ZÁKAZNÍKA:
 
     except Exception as error:
 
-        print("Gemini API error:", repr(error))
+        print("Groq API error:", repr(error))
 
         return jsonify({
             "error": "Nepodařilo se vytvořit odpověď podpory."
